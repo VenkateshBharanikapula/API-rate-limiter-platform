@@ -1,292 +1,607 @@
 # API Rate Limiting & API Key Management Platform
 
-A production-style API gateway service built with **FastAPI**, **PostgreSQL**, and **Redis**.
-Provides API key authentication, configurable per-client rate limiting (Fixed Window algorithm),
-usage analytics, and audit logging — the kind of system that sits in front of internal APIs,
-SaaS products, or developer platforms to protect them from abuse and uncontrolled consumption.
+A production-style API gateway built with **FastAPI, PostgreSQL, Redis, and Docker**. The platform provides API key authentication, configurable per-client rate limiting, usage analytics, and audit logging.
 
----
+The system is designed to sit in front of internal APIs, SaaS applications, or developer platforms to protect services from abuse and uncontrolled API consumption.
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Web framework | FastAPI (async) |
-| Database | PostgreSQL 16 + SQLAlchemy 2.0 (async) + Alembic |
-| Cache / Rate limiting | Redis 7 |
-| Containerisation | Docker + Docker Compose |
-| Testing | Pytest + pytest-asyncio + httpx + fakeredis |
-| Load testing | Locust |
-| Code quality | Ruff |
-
----
+| Layer                 | Technology                               |
+| --------------------- | ---------------------------------------- |
+| Web Framework         | FastAPI                                  |
+| Language              | Python 3.12+                             |
+| Database              | PostgreSQL 16                            |
+| ORM                   | SQLAlchemy 2.0 (Async)                   |
+| Migrations            | Alembic                                  |
+| Cache / Rate Limiting | Redis 7                                  |
+| Containerization      | Docker & Docker Compose                  |
+| Testing               | Pytest, pytest-asyncio, HTTPX, Fakeredis |
+| Load Testing          | Locust                                   |
+| Code Quality          | Ruff                                     |
 
 ## Architecture
 
+```text
+                         HTTP Request
+                              │
+                              │ X-API-KEY
+                              ▼
+┌─────────────────────────────────────────────────────────┐
+│                  Rate Limit Middleware                  │
+│                                                         │
+│  1. Validate API Key ──────────────► PostgreSQL         │
+│                                                         │
+│  2. Check Rate Limit ──────────────► Redis              │
+│                                      INCR / EXPIRE      │
+│                                                         │
+│  3. Allow / Reject ────────────────► 200 / 429          │
+│                                                         │
+│  4. Record Usage ─────────────────► PostgreSQL          │
+└──────────────────────────┬──────────────────────────────┘
+                           │
+                           ▼
+                  ┌─────────────────┐
+                  │ Endpoint Layer  │
+                  └────────┬────────┘
+                           │
+                           ▼
+                  ┌─────────────────┐
+                  │ Service Layer   │
+                  └────────┬────────┘
+                           │
+                           ▼
+                  ┌─────────────────┐
+                  │ Repository      │
+                  │ Layer           │
+                  └────────┬────────┘
+                           │
+                           ▼
+                      PostgreSQL
 ```
-HTTP Request (X-API-KEY header)
-        │
-        ▼
-┌──────────────────────────────────────────────┐
-│           RateLimitMiddleware                │
-│  1. Validate API key    → Postgres (indexed) │
-│  2. Check rate limit    → Redis INCR/EXPIRE  │
-│  3. Allow / reject      → 200 or 429         │
-│  4. Log usage row       → Postgres (async)   │
-└──────────────────┬───────────────────────────┘
-                   │
-        ┌──────────▼──────────┐
-        │   Endpoint Handler  │
-        │   Service Layer     │
-        │   Repository Layer  │
-        └─────────────────────┘
+
+Detailed architecture documentation:
+
+* [Architecture](docs/architecture/ARCHITECTURE.md)
+* [Database Design](docs/database/DATABASE.md)
+* [API Reference](docs/api/API_REFERENCE.md)
+* [Performance & Load Testing](docs/performance/PERFORMANCE.md)
+
+## Key Features
+
+### API Key Authentication
+
+Clients authenticate using an API key supplied through the `X-API-KEY` request header.
+
+```http
+X-API-KEY: your-api-key
 ```
 
-Full details: [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md)
+### Configurable Rate Limiting
 
----
+The platform implements a **Fixed Window** rate-limiting algorithm using Redis atomic counters.
 
-## Quickstart
+Default limits:
+
+| Plan    | Requests |     Window |
+| ------- | -------: | ---------: |
+| Free    |       10 | 60 seconds |
+| Basic   |       50 | 60 seconds |
+| Premium |      200 | 60 seconds |
+
+Rate limits can also be customized per client.
+
+### Redis-Based Counters
+
+Redis is used for rate-limit counters because `INCR` provides atomic counter updates with very low latency.
+
+Each request updates a Redis counter associated with the client and rate-limit window.
+
+### Usage Analytics
+
+The platform records API usage and provides analytics endpoints for monitoring consumption and request activity.
+
+### Audit Logging
+
+Important client and administrative operations are recorded using append-only audit logs.
+
+### Async Database Access
+
+The application uses **SQLAlchemy 2.0's asynchronous API** to support non-blocking database operations within FastAPI.
+
+### Layered Architecture
+
+Business logic is separated into:
+
+```text
+Middleware
+    ↓
+API Endpoints
+    ↓
+Services
+    ↓
+Repositories
+    ↓
+Database
+```
+
+This keeps HTTP concerns, business logic, and database access independent and easier to test.
+
+## Project Structure
+
+```text
+api-rate-limiter-platform/
+│
+├── app/
+│   ├── api/
+│   │   └── v1/
+│   │       ├── endpoints/
+│   │       │   ├── analytics.py
+│   │       │   ├── clients.py
+│   │       │   ├── dependencies.py
+│   │       │   ├── rate_limits.py
+│   │       │   └── usage.py
+│   │       └── router.py
+│   │
+│   ├── core/
+│   │   ├── auth.py
+│   │   ├── config.py
+│   │   ├── constants.py
+│   │   ├── exceptions.py
+│   │   └── security.py
+│   │
+│   ├── db/
+│   │   ├── base.py
+│   │   ├── redis.py
+│   │   └── session.py
+│   │
+│   ├── middleware/
+│   │   └── rate_limiter.py
+│   │
+│   ├── models/
+│   │   ├── audit_log.py
+│   │   ├── client.py
+│   │   ├── rate_limit.py
+│   │   └── usage.py
+│   │
+│   ├── repositories/
+│   │   ├── audit_repository.py
+│   │   ├── client_repository.py
+│   │   ├── rate_limit_repository.py
+│   │   └── usage_repository.py
+│   │
+│   ├── schemas/
+│   ├── services/
+│   └── main.py
+│
+├── alembic/
+│   └── versions/
+│
+├── docs/
+│   ├── api/
+│   ├── architecture/
+│   ├── database/
+│   └── performance/
+│
+├── locust/
+│   └── locustfile.py
+│
+├── requirements/
+│   ├── base.txt
+│   ├── dev.txt
+│   └── test.txt
+│
+├── tests/
+│   ├── factories/
+│   ├── fixtures/
+│   ├── integration/
+│   ├── middleware/
+│   └── unit/
+│
+├── docker-compose.yml
+├── Dockerfile
+├── Makefile
+├── alembic.ini
+├── pyproject.toml
+├── .env.example
+└── README.md
+```
+
+## Quick Start
 
 ### Prerequisites
-- Docker and Docker Compose installed
 
-### 1. Clone and configure
+Install:
+
+* Docker Desktop
+* Git
+
+### 1. Clone the Repository
 
 ```bash
-git clone <repo-url>
-cd api-rate-limiter-platform
+git clone https://github.com/VenkateshBharanikapula/API-rate-limiter-platform.git
+cd API-rate-limiter-platform
+```
+
+### 2. Configure Environment Variables
+
+Copy the example environment file:
+
+```bash
 cp .env.example .env
 ```
 
-### 2. Start the stack
+On Windows PowerShell:
 
-```bash
-docker-compose up --build
+```powershell
+Copy-Item .env.example .env
 ```
 
-This will:
-- Start PostgreSQL and Redis
-- Run `alembic upgrade head` to create all tables
-- Start the FastAPI app on port 8000
+Update `.env` with your local configuration if necessary.
 
-### 3. Verify it's running
+> **Important:** Never commit `.env` to Git. The repository already includes `.env` in `.gitignore`.
+
+### 3. Start the Application
+
+Build and start the complete stack:
+
+```bash
+docker compose up --build
+```
+
+The stack starts:
+
+* FastAPI
+* PostgreSQL
+* Redis
+* Alembic database migrations
+
+The API will be available at:
+
+```text
+http://localhost:8000
+```
+
+### 4. Verify the Application
+
+Health check:
 
 ```bash
 curl http://localhost:8000/health
 ```
 
 Expected response:
-```json
-{"status": "ok", "checks": {"database": "ok", "redis": "ok"}}
-```
 
----
+```json
+{
+  "status": "ok",
+  "checks": {
+    "database": "ok",
+    "redis": "ok"
+  }
+}
+```
 
 ## API Documentation
 
-| URL | Description |
-|-----|-------------|
-| http://localhost:8000/docs | Swagger UI (interactive) |
-| http://localhost:8000/redoc | ReDoc |
+Once the application is running:
 
----
+### Swagger UI
 
-## Quick API Tour
+```text
+http://localhost:8000/docs
+```
 
-### Register a client
+### ReDoc
+
+```text
+http://localhost:8000/redoc
+```
+
+## API Examples
+
+### Register a Client
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/clients \
   -H "Content-Type: application/json" \
-  -d '{"client_name": "My Service", "email": "me@example.com", "plan": "free"}'
+  -d "{\"client_name\":\"My Service\",\"email\":\"me@example.com\",\"plan\":\"free\"}"
 ```
 
-Response:
+The response returns a client ID and API key.
+
+Example:
+
 ```json
-{"client_id": 1, "api_key": "abc123..."}
+{
+  "client_id": 1,
+  "api_key": "your-generated-api-key"
+}
 ```
 
-### Make an authenticated request
+### Make an Authenticated Request
 
 ```bash
 curl http://localhost:8000/api/v1/usage/current \
-  -H "X-API-KEY: abc123..."
+  -H "X-API-KEY: your-generated-api-key"
 ```
 
-Response includes rate limit headers:
-```
+A successful response includes rate-limit information such as:
+
+```text
 X-RateLimit-Limit: 10
 X-RateLimit-Remaining: 9
 X-RateLimit-Window: 60
 ```
 
-### Exceed the rate limit
+### Exceed the Rate Limit
 
-After 10 requests in 60 seconds (free plan):
+After the configured request limit has been reached, the API responds with:
+
+```http
+HTTP/1.1 429 Too Many Requests
+```
+
+Example:
+
 ```json
-{"detail": "Rate limit exceeded"}
+{
+  "detail": "Rate limit exceeded"
+}
 ```
-HTTP 429 Too Many Requests
-
-### View system analytics
-
-```bash
-curl http://localhost:8000/api/v1/analytics/system
-```
-
----
-
-## Plan Limits
-
-| Plan | Requests | Window |
-|------|----------|--------|
-| free | 10 | 60s |
-| basic | 50 | 60s |
-| premium | 200 | 60s |
-
-Custom limits can be set per-client via `PUT /api/v1/rate-limits/{client_id}`.
-
----
-
-## Project Structure
-
-```
-api-rate-limiter-platform/
-├── app/
-│   ├── api/v1/endpoints/    # Route handlers (clients, usage, analytics, rate_limits)
-│   ├── core/                # config, security, exceptions, constants, auth
-│   ├── middleware/          # RateLimitMiddleware (the core of the project)
-│   ├── models/              # SQLAlchemy ORM models
-│   ├── schemas/             # Pydantic request/response schemas
-│   ├── services/            # Business logic layer
-│   ├── repositories/        # Raw DB access (no business rules)
-│   └── db/                  # Session, base, Redis client
-│
-├── tests/
-│   ├── unit/                # Service logic, algorithm, security tests
-│   ├── integration/         # Full endpoint tests (DB + Redis)
-│   ├── middleware/          # Auth + rate limit enforcement tests
-│   └── factories/           # factory-boy test data builders
-│
-├── locust/                  # 3 load test scenarios
-├── alembic/                 # DB migrations
-├── docs/                    # Architecture, API, DB, performance docs
-├── requirements/            # base.txt, test.txt, dev.txt
-├── docker-compose.yml
-├── Dockerfile
-├── Makefile
-└── .env.example
-```
-
----
 
 ## Development Commands
 
+The project includes a `Makefile` for common development tasks.
+
 ```bash
-make build          # Build and start all containers
-make up             # Start containers (no rebuild)
-make down           # Stop containers
-make logs           # Tail FastAPI logs
-make shell          # Shell into the FastAPI container
-
-make migrate        # Run pending Alembic migrations
-make makemigration msg="add index"  # Auto-generate a migration
-
-make test           # Run the full test suite
-make test-cov       # Run tests with coverage report
-make lint           # Run Ruff linter
-
-make locust         # Start Locust web UI (localhost:8089)
+make build
 ```
 
----
-
-## Running Tests
-
-Tests use SQLite (in-memory) + fakeredis — no real Postgres or Redis needed.
+Build and start the application.
 
 ```bash
-# Install test deps locally
+make up
+```
+
+Start the existing containers.
+
+```bash
+make down
+```
+
+Stop the containers.
+
+```bash
+make logs
+```
+
+View application logs.
+
+```bash
+make shell
+```
+
+Open a shell inside the FastAPI container.
+
+```bash
+make migrate
+```
+
+Run pending Alembic migrations.
+
+```bash
+make makemigration msg="add index"
+```
+
+Generate a new Alembic migration.
+
+```bash
+make test
+```
+
+Run the test suite.
+
+```bash
+make test-cov
+```
+
+Run tests with coverage.
+
+```bash
+make lint
+```
+
+Run Ruff.
+
+```bash
+make locust
+```
+
+Start the Locust web interface.
+
+## Testing
+
+The project uses:
+
+* Pytest
+* pytest-asyncio
+* HTTPX
+* Fakeredis
+
+Tests can run without a production PostgreSQL or Redis instance.
+
+Install the test dependencies:
+
+```bash
 pip install -r requirements/test.txt
+```
 
-# Run all tests
+Run the complete test suite:
+
+```bash
 pytest
+```
 
-# With coverage
+Run with coverage:
+
+```bash
 pytest --cov=app --cov-report=term-missing
+```
 
-# Specific test file
+Run a specific test module:
+
+```bash
 pytest tests/middleware/test_rate_limit_middleware.py -v
 ```
 
-Target: **75%+ coverage** (per spec).
-
----
-
 ## Load Testing
 
+Locust is used to simulate concurrent API traffic.
+
+### Scenario 1 — Valid Traffic
+
+100 concurrent users:
+
 ```bash
-# Install dev deps
-pip install -r requirements/dev.txt
-
-# Scenario 1: 100 users, valid traffic
-locust -f locust/locustfile.py --host=http://localhost:8000 \
-       --headless -u 100 -r 10 --run-time 60s --tags scenario1
-
-# Scenario 2: 500 users, exceeding limits
-locust -f locust/locustfile.py --host=http://localhost:8000 \
-       --headless -u 500 -r 50 --run-time 60s --tags scenario2
-
-# Scenario 3: mixed free + premium
-locust -f locust/locustfile.py --host=http://localhost:8000 \
-       --headless -u 150 -r 15 --run-time 60s --tags scenario3
+locust -f locust/locustfile.py \
+  --host=http://localhost:8000 \
+  --headless \
+  -u 100 \
+  -r 10 \
+  --run-time 60s \
+  --tags scenario1
 ```
 
-Full details: [`docs/performance/PERFORMANCE.md`](docs/performance/PERFORMANCE.md)
+### Scenario 2 — Rate Limit Enforcement
 
----
+500 concurrent users:
 
-## Documentation Index
+```bash
+locust -f locust/locustfile.py \
+  --host=http://localhost:8000 \
+  --headless \
+  -u 500 \
+  -r 50 \
+  --run-time 60s \
+  --tags scenario2
+```
 
-| Document | Description |
-|----------|-------------|
-| [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md) | System design, request lifecycle, layer responsibilities |
-| [`docs/database/DATABASE.md`](docs/database/DATABASE.md) | ER diagram, table design, index strategy |
-| [`docs/api/API_REFERENCE.md`](docs/api/API_REFERENCE.md) | Full endpoint reference with examples |
-| [`docs/performance/PERFORMANCE.md`](docs/performance/PERFORMANCE.md) | Load test scenarios, metrics, interpretation |
+### Scenario 3 — Mixed Plans
 
----
+150 concurrent users:
 
-## Key Design Decisions
+```bash
+locust -f locust/locustfile.py \
+  --host=http://localhost:8000 \
+  --headless \
+  -u 150 \
+  -r 15 \
+  --run-time 60s \
+  --tags scenario3
+```
 
-**Why Fixed Window?**
-Explicit spec requirement. Simple to implement and explain. Known trade-off
-(boundary burst) is a deliberate interview talking point about algorithm choice.
+See the complete performance documentation:
 
-**Why Redis for counters, not Postgres?**
-INCR is atomic, O(1), and sub-millisecond. Postgres row-level locks add ~10ms
-per request — unacceptable on every single authenticated call.
+[Performance Documentation](docs/performance/PERFORMANCE.md)
 
-**Why async SQLAlchemy?**
-FastAPI's value proposition is async I/O concurrency. Using a sync ORM
-undercuts that story. The rate limiter is I/O-bound (Redis + Postgres on
-every request), making async the right choice.
+## Design Decisions
 
-**Why are services framework-agnostic?**
-Services raise `AppError` subclasses, not `HTTPException`. This means service
-logic is testable without FastAPI involved, and the HTTP layer (status codes,
-response bodies) is a single translation point in `main.py`'s exception handler.
+### Why Fixed Window Rate Limiting?
 
----
+Fixed Window was selected because it provides a simple and predictable implementation while satisfying the project's requirements.
 
-## Resume Description
+The main trade-off is the possibility of a boundary burst when requests occur near the transition between two windows.
 
-> Developed a production-style API Rate Limiting and API Key Management Platform using
-> FastAPI, PostgreSQL, Redis, and Docker. Implemented custom Starlette middleware for
-> API key authentication and Fixed Window rate limiting with Redis-based atomic counters.
-> Designed a layered architecture (middleware → endpoints → services → repositories) with
-> async SQLAlchemy 2.0, Alembic migrations, per-client configurable limits, usage analytics
-> with Redis caching, append-only audit logging, and a 75%+ covered test suite using
-> pytest-asyncio, httpx, and fakeredis. Load tested with Locust across three concurrent
-> user scenarios (100 / 500 / mixed).
+This provides a useful comparison point against alternative algorithms such as:
+
+* Sliding Window
+* Token Bucket
+* Leaky Bucket
+
+### Why Redis for Rate-Limit Counters?
+
+Redis provides atomic counter operations through commands such as `INCR`.
+
+This makes it well suited for high-frequency rate-limit checks where counters need to be updated safely across concurrent requests.
+
+### Why Async SQLAlchemy?
+
+FastAPI is designed around asynchronous I/O.
+
+Using SQLAlchemy's asynchronous API allows database operations to integrate naturally with the application's async request handling.
+
+### Why Separate Services and Repositories?
+
+The service layer contains business logic while repositories handle database access.
+
+This separation provides:
+
+* Easier unit testing
+* Clearer responsibilities
+* Reduced coupling to FastAPI
+* Reusable business logic
+* Cleaner database access
+
+Services raise application-specific errors rather than FastAPI `HTTPException` instances. HTTP-specific error translation is handled at the application layer.
+
+## Security Considerations
+
+The repository intentionally does **not** contain production secrets.
+
+Environment-specific configuration should be stored in `.env`.
+
+The following files should never be committed:
+
+```text
+.env
+*.db
+*.sqlite3
+__pycache__/
+```
+
+For production deployments, additional security controls should be considered, including:
+
+* Secret management
+* HTTPS/TLS
+* API key rotation
+* Key hashing
+* Database credential rotation
+* Redis authentication
+* Network isolation
+* Request validation
+* Structured security logging
+* Rate-limit abuse monitoring
+
+## Documentation
+
+| Document                                          | Description                               |
+| ------------------------------------------------- | ----------------------------------------- |
+| [Architecture](docs/architecture/ARCHITECTURE.md) | System architecture and request lifecycle |
+| [Database](docs/database/DATABASE.md)             | Database schema and index strategy        |
+| [API Reference](docs/api/API_REFERENCE.md)        | API endpoints and request examples        |
+| [Performance](docs/performance/PERFORMANCE.md)    | Load-testing scenarios and analysis       |
+| [Deployment](docs/DEPLOYMENT.md)                  | Deployment information                    |
+
+## Future Improvements
+
+Potential improvements include:
+
+* Sliding Window or Token Bucket rate limiting
+* Distributed rate limiting across multiple API gateway instances
+* API key rotation and revocation
+* API key hashing
+* Prometheus metrics
+* Grafana dashboards
+* Distributed tracing
+* Background analytics processing
+* Redis Cluster support
+* Kubernetes deployment
+* CI/CD with GitHub Actions
+
+## Portfolio Summary
+
+> Built a production-style API Rate Limiting and API Key Management Platform using FastAPI, PostgreSQL, Redis, and Docker. Implemented API key authentication, Redis-backed Fixed Window rate limiting, per-client configurable limits, usage analytics, audit logging, async SQLAlchemy 2.0, Alembic migrations, layered service/repository architecture, automated testing with pytest and fakeredis, and concurrent load testing with Locust.
+
+## License
+
+This project is available for educational and portfolio purposes. Add an appropriate open-source license before distributing the project for reuse.
