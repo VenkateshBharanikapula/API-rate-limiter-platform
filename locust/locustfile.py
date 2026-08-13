@@ -105,7 +105,7 @@ class FreeUser(HttpUser):
     def on_start(self):
         self.api_key = register_client(self.client, plan="free")
         if not self.api_key:
-            self.environment.runner.quit()
+            self.environment.runner.quit() 
 
 
 # ---------------------------------------------------------------------------
