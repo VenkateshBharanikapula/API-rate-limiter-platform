@@ -11,7 +11,7 @@ Run:
     locust -f locust/locustfile.py --host=http://localhost:8000
 
 Or headless (CI-style):
-    locust -f locust/locustfile.py --host=http://localhost:8000 \
+    locust -f locust/locustfile.py --host=http://localhost:8000 \ 
            --headless -u 100 -r 10 --run-time 60s \
            --html docs/performance/report.html
 
