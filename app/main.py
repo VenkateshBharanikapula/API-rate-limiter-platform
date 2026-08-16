@@ -97,4 +97,4 @@ async def health_check():
 
 @app.get("/", tags=["health"], summary="Root")
 async def root():
-    return {"service": settings.app_name, "docs": "/docs"}
+    return {"service": settings.app_name, "docs": "/docs"} 
