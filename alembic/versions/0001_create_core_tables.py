@@ -112,4 +112,4 @@ def downgrade() -> None:
     op.drop_table("audit_logs")
     op.drop_table("api_usage")
     op.drop_table("rate_limit_configs")
-    op.drop_table("api_clients")
+    op.drop_table("api_clients") 
